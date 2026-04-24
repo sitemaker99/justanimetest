@@ -68,6 +68,8 @@ export default function Player({
   const artRef = useRef(null);
   const leftAtRef = useRef(0);
   const boundKeydownRef = useRef(null);
+  // AnimePahe: VITE_PROXY_URL is used; stream URLs from getStreamInfo are already fully proxied.
+  // VITE_M3U8_PROXY_URL kept for backward compatibility but unused when VITE_PROXY_URL is set.
   const proxy = import.meta.env.VITE_M3U8_PROXY_URL;
   const m3u8proxy = import.meta.env.VITE_M3U8_PROXY_URL?.split(",") || [];
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(
@@ -272,17 +274,28 @@ export default function Player({
       // ignore
     }
 
+    // AnimePahe: stream URLs returned by getStreamInfo already include the proxy.
+    const viteProxy = import.meta.env.VITE_PROXY_URL;
     const hd1Proxy = import.meta.env.VITE_HD_1_PROXY_URL;
-    const currentProxy = (activeServerName === "HD-1" && hd1Proxy)
-      ? hd1Proxy
-      : m3u8proxy[Math.floor(Math.random() * m3u8proxy?.length)];
-
-    const art = new Artplayer({
-      url:
+    const isAlreadyProxied = viteProxy && streamUrl && streamUrl.startsWith(viteProxy);
+    let finalUrl;
+    if (isAlreadyProxied || !m3u8proxy[0]) {
+      // AnimePahe path: URL is fully formed by getStreamInfo
+      finalUrl = streamUrl;
+    } else {
+      // Legacy HiAnime path
+      const currentProxy = (activeServerName === "HD-1" && hd1Proxy)
+        ? hd1Proxy
+        : m3u8proxy[Math.floor(Math.random() * m3u8proxy?.length)];
+      finalUrl =
         currentProxy +
         encodeURIComponent(streamUrl) +
         "&headers=" +
-        encodeURIComponent(JSON.stringify(headers)),
+        encodeURIComponent(JSON.stringify(headers));
+    }
+
+    const art = new Artplayer({
+      url: finalUrl,
       container: artRef.current,
       type: "m3u8",
       autoplay: autoPlay,

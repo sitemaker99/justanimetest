@@ -1,14 +1,8 @@
-import axios from "axios";
+/**
+ * getNextEpisodeSchedule.utils.js — AnimePahe adapter
+ * AnimePahe has no next-episode schedule endpoint — return null.
+ */
 
-const getNextEpisodeSchedule = async (id) => {
-  const api_url = import.meta.env.VITE_API_URL;
-  try {
-    const response = await axios.get(`${api_url}/schedule/${id}`);
-    return response.data.results;
-  } catch (err) {
-    console.error("Error fetching next episode schedule:", err);
-    return err;
-  }
-};
-
-export default getNextEpisodeSchedule;
+export default async function getNextEpisodeSchedule(animeId) {
+  return { nextEpisodeSchedule: null };
+}

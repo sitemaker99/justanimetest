@@ -1,5 +1,18 @@
 /* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/exhaustive-deps */
+/**
+ * useWatch.js — AnimePahe-aware version
+ *
+ * Key differences from the original HiAnime version:
+ * 1. Episode IDs are "animeSession?ep=<number>" — we extract the number.
+ * 2. After loading episodes we cache each episode's AnimePahe session in
+ *    sessionStorage so getServers / getStreamInfo can retrieve it.
+ * 3. "Servers" are quality variants (1080p, 720p…).  Each server object
+ *    carries a _kwikUrl.  We cache those in sessionStorage so getStreamInfo
+ *    can look them up by (animeId, episodeId, serverName).
+ * 4. Stream info is built from the /m3u8 endpoint + VITE_PROXY_URL.
+ */
+
 import { useState, useEffect, useRef } from "react";
 import getAnimeInfo from "@/src/utils/getAnimeInfo.utils";
 import getEpisodes from "@/src/utils/getEpisodes.utils";
@@ -33,6 +46,7 @@ export const useWatch = (animeId, initialEpisodeId) => {
   const isServerFetchInProgress = useRef(false);
   const isStreamFetchInProgress = useRef(false);
 
+  // ── Reset on anime change ──────────────────────────────────────────────────
   useEffect(() => {
     setEpisodes(null);
     setEpisodeId(null);
@@ -56,6 +70,7 @@ export const useWatch = (animeId, initialEpisodeId) => {
     isStreamFetchInProgress.current = false;
   }, [animeId]);
 
+  // ── Fetch anime info + episodes ────────────────────────────────────────────
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
@@ -64,15 +79,25 @@ export const useWatch = (animeId, initialEpisodeId) => {
           getAnimeInfo(animeId, false),
           getEpisodes(animeId),
         ]);
+
         setAnimeInfo(animeData?.data);
         setSeasons(animeData?.seasons);
-        setEpisodes(episodesData?.episodes);
-        setTotalEpisodes(episodesData?.totalEpisodes);
+
+        const eps = episodesData?.episodes || [];
+        setEpisodes(eps);
+        setTotalEpisodes(episodesData?.totalEpisodes || 0);
+
+        // Cache each episode's AnimePahe session so getServers can use it
+        eps.forEach(ep => {
+          const num = ep.id.match(/ep=(\d+)/)?.[1];
+          if (num && ep._paheSession) {
+            sessionStorage.setItem(`pahe_ep_session_${animeId}_${num}`, ep._paheSession);
+          }
+        });
+
         const newEpisodeId =
           initialEpisodeId ||
-          (episodesData?.episodes?.length > 0
-            ? episodesData.episodes[0].id.match(/ep=(\d+)/)?.[1]
-            : null);
+          (eps.length > 0 ? eps[0].id.match(/ep=(\d+)/)?.[1] : null);
         setEpisodeId(newEpisodeId);
       } catch (err) {
         console.error("Error fetching initial data:", err);
@@ -84,6 +109,7 @@ export const useWatch = (animeId, initialEpisodeId) => {
     fetchInitialData();
   }, [animeId]);
 
+  // ── Next episode schedule (stub for AnimePahe) ─────────────────────────────
   useEffect(() => {
     const fetchNextEpisodeSchedule = async () => {
       try {
@@ -96,72 +122,46 @@ export const useWatch = (animeId, initialEpisodeId) => {
     fetchNextEpisodeSchedule();
   }, [animeId]);
 
+  // ── Sync active episode number ─────────────────────────────────────────────
   useEffect(() => {
-    if (!episodes || !episodeId) {
-      setActiveEpisodeNum(null);
-      return;
-    }
-    const activeEpisode = episodes.find((episode) => {
-      const match = episode.id.match(/ep=(\d+)/);
-      return match && match[1] === episodeId;
-    });
-    const newActiveEpisodeNum = activeEpisode ? activeEpisode.episode_no : null;
-    if (activeEpisodeNum !== newActiveEpisodeNum) {
-      setActiveEpisodeNum(newActiveEpisodeNum);
-    }
+    if (!episodes || !episodeId) { setActiveEpisodeNum(null); return; }
+    const activeEp = episodes.find(ep => ep.id.match(/ep=(\d+)/)?.[1] === episodeId);
+    const num = activeEp?.episode_no ?? null;
+    if (activeEpisodeNum !== num) setActiveEpisodeNum(num);
   }, [episodeId, episodes]);
 
+  // ── Fetch servers (quality variants) ──────────────────────────────────────
   useEffect(() => {
     if (!episodeId || !episodes || isServerFetchInProgress.current) return;
 
     let mounted = true;
-    const controller = new AbortController();
     isServerFetchInProgress.current = true;
     setServerLoading(true);
 
     const fetchServers = async () => {
       try {
-        const data = await getServers(animeId, episodeId, { signal: controller.signal });
+        const serversList = await getServers(animeId, episodeId);
+
         if (!mounted) return;
 
-        const allowedServers = [
-  "HD-1",
-  "HD-2",
-  "Vidstreaming",
-  "Vidcloud",
-  "DouVideo",
-  "VidSrc",
-  "MegaCloud",
-];
+        // Cache kwik URLs by serverName so getStreamInfo can look them up
+        serversList.forEach(s => {
+          if (s._kwikUrl) {
+            sessionStorage.setItem(
+              `pahe_kwik_${animeId}_${episodeId}_${s.serverName}`,
+              s._kwikUrl
+            );
+          }
+        });
 
-const filteredServers = data?.filter(server =>
-  allowedServers.includes(server.serverName)
-) || [];
-
-        let serversList = [...filteredServers];
-
-
-
-        const savedServerName = localStorage.getItem("server_name");
-        const savedServerType = localStorage.getItem("server_type");
-
-        const initialServer =
-          serversList.find(s => s.serverName === savedServerName && s.type === savedServerType) ||
-          serversList.find(s => s.serverName === savedServerName) ||
-          serversList.find(s => s.serverName === "HD-2") ||
-          serversList.find(
-            s =>
-              s.type === savedServerType &&
-              ["HD-1", "HD-2", "HD-3", "HD-4", "Vidstreaming", "Vidcloud", "DouVideo"].includes(s.serverName)
-          ) ||
-          serversList[0];
+        // Prefer highest quality (first in the sorted list from API)
+        const initialServer = serversList[0] || null;
 
         setServers(serversList);
-        setActiveServerType(initialServer?.type);
-        setActiveServerName(initialServer?.serverName);
-        setActiveServerId(initialServer?.data_id);
+        setActiveServerType(initialServer?.type || null);
+        setActiveServerName(initialServer?.serverName || null);
+        setActiveServerId(initialServer?.data_id ?? null);
       } catch (err) {
-        if (err?.name === "AbortError") return;
         console.error("Error fetching servers:", err);
         if (mounted) setError(err.message || "An error occurred.");
       } finally {
@@ -176,75 +176,66 @@ const filteredServers = data?.filter(server =>
 
     return () => {
       mounted = false;
-      try { controller.abort(); } catch (e) {
-        // console.log(e.message);
-      }
       isServerFetchInProgress.current = false;
     };
   }, [episodeId, episodes]);
 
+  // ── Sync serverName when serverId changes ──────────────────────────────────
   useEffect(() => {
-    if (!servers || !activeServerId) return;
-    const activeServer = servers.find((s) => s.data_id === activeServerId);
+    if (!servers || activeServerId == null) return;
+    const activeServer = servers.find(s => s.data_id === activeServerId);
     if (activeServer) {
       setActiveServerName(activeServer.serverName);
       setActiveServerType(activeServer.type);
     }
   }, [activeServerId, servers]);
 
-  // Fetch stream info only when episodeId, activeServerId, and servers are ready
+  // ── Fetch stream info ──────────────────────────────────────────────────────
   useEffect(() => {
     if (
       !episodeId ||
-      !activeServerId ||
+      activeServerId == null ||
       !servers ||
       isServerFetchInProgress.current ||
       isStreamFetchInProgress.current
-    )
-      return;
-    const iframeServers = [];
-    // const iframeServers = ["hd-1", "hd-4", "vidstreaming", "vidcloud", "douvideo"];
+    ) return;
 
-    if (iframeServers.includes(activeServerName?.toLowerCase()) && !serverLoading) {
-      setBuffering(false);
-      return;
-    }
     const fetchStreamInfo = async () => {
       isStreamFetchInProgress.current = true;
       setBuffering(true);
       try {
-        const server = servers.find((srv) => srv.data_id === activeServerId);
-        if (server) {
-          const data = await getStreamInfo(
-            animeId,
-            episodeId,
-            server.serverName.toLowerCase() === "hd-3" ? "hd-1" : server.serverName.toLowerCase(),
-            server.type.toLowerCase()
-          );
-          setStreamInfo(data);
-          setStreamUrl(data?.streamingLink?.[0]?.link || null);
-          setIntro(data?.intro || null);
-          setOutro(data?.outro || null);
-          const subtitles =
-            data?.tracks
-              ?.filter((track) => track.kind === "captions")
-              .map(({ file, label, default: isDefault }) => ({ file, label, default: isDefault })) || [];
-          setSubtitles(subtitles);
-          const thumbnailTrack = data?.tracks?.find(
-            (track) => track.kind === "thumbnails" && track.file
-          );
-          if (thumbnailTrack) setThumbnail(thumbnailTrack.file);
-        } else {
-          setError("No server found with the activeServerId.");
-        }
+        const server = servers.find(s => s.data_id === activeServerId);
+        if (!server) throw new Error("No matching server found.");
+
+        const data = await getStreamInfo(
+          animeId,
+          episodeId,
+          server.serverName,
+          server.type
+        );
+
+        setStreamInfo(data);
+        setStreamUrl(data?.streamingLink?.[0]?.link || null);
+        setIntro(data?.intro || null);
+        setOutro(data?.outro || null);
+        setSubtitles(
+          (data?.tracks || [])
+            .filter(t => t.kind === "captions")
+            .map(({ file, label, default: isDefault }) => ({ file, label, default: isDefault }))
+        );
+        const thumbTrack = (data?.tracks || []).find(t => t.kind === "thumbnails" && t.file);
+        if (thumbTrack) setThumbnail(thumbTrack.file);
       } catch (err) {
         console.error("Error fetching stream info:", err);
         setError(err.message || "An error occurred.");
+        setStreamUrl(null);
+        setStreamInfo(null);
       } finally {
         setBuffering(false);
         isStreamFetchInProgress.current = false;
       }
     };
+
     fetchStreamInfo();
   }, [episodeId, activeServerId, servers]);
 

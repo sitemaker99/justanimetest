@@ -2,8 +2,6 @@ import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { Routes, Route } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
-import { Analytics } from '@vercel/analytics/react';
-import { SpeedInsights } from '@vercel/speed-insights/react';
 import { HomeInfoProvider } from "./context/HomeInfoContext";
 import Home from "./pages/Home/Home";
 import AnimeInfo from "./pages/animeInfo/AnimeInfo";
@@ -21,7 +19,6 @@ import SplashScreen from "./components/splashscreen/SplashScreen";
 import Terms from "./pages/terms/Terms";
 import DMCA from "./pages/dmca/DMCA";
 import Contact from "./pages/contact/Contact";
-import DiscordPopup from "./components/DiscordPopup";
 
 function App() {
   const location = useLocation();
@@ -78,9 +75,6 @@ function App() {
             </div>
             {!isSplashScreen && <Footer />}
           </main>
-          <Analytics />
-          <SpeedInsights />
-          <DiscordPopup />
         </div>
       </HomeInfoProvider>
     </HelmetProvider>
